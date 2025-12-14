@@ -1,0 +1,249 @@
+// Prisma Schema for Luchida
+// Database: MySQL 8.x
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// アカウント管理
+// ============================================
+
+model Account {
+  id              String   @id @default(uuid()) @db.VarChar(36)
+  oandaAccountId  String   @unique @map("oanda_account_id") @db.VarChar(255)
+  name            String?  @db.VarChar(255)
+  balance         Decimal  @db.Decimal(15, 2)
+  currency        String   @db.VarChar(3)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // リレーション
+  orders          Order[]
+  positions       Position[]
+  ruleViolations  RuleViolation[]
+  tradeHistory    TradeHistory[]
+  dailyPerformance DailyPerformance[]
+
+  @@map("accounts")
+}
+
+// ============================================
+// 注文管理
+// ============================================
+
+model Order {
+  id          String      @id @default(uuid()) @db.VarChar(36)
+  accountId   String      @map("account_id") @db.VarChar(36)
+  currencyPair String     @map("currency_pair") @db.VarChar(10)
+  side        OrderSide
+  type        OrderType
+  quantity    Decimal     @db.Decimal(15, 4)
+  price       Decimal?    @db.Decimal(15, 5)
+  stopLoss    Decimal?    @map("stop_loss") @db.Decimal(15, 5)
+  takeProfit  Decimal?    @map("take_profit") @db.Decimal(15, 5)
+  status      OrderStatus
+  filledPrice Decimal?    @map("filled_price") @db.Decimal(15, 5)
+  filledAt    DateTime?   @map("filled_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  // リレーション
+  account     Account     @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@index([status])
+  @@map("orders")
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP
+}
+
+enum OrderStatus {
+  PENDING
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+// ============================================
+// ポジション管理
+// ============================================
+
+model Position {
+  id            String        @id @default(uuid()) @db.VarChar(36)
+  accountId     String        @map("account_id") @db.VarChar(36)
+  currencyPair  String        @map("currency_pair") @db.VarChar(10)
+  side          PositionSide
+  quantity      Decimal       @db.Decimal(15, 4)
+  openPrice     Decimal       @map("open_price") @db.Decimal(15, 5)
+  currentPrice  Decimal       @map("current_price") @db.Decimal(15, 5)
+  stopLoss      Decimal?      @map("stop_loss") @db.Decimal(15, 5)
+  takeProfit    Decimal?      @map("take_profit") @db.Decimal(15, 5)
+  unrealizedPnl Decimal       @map("unrealized_pnl") @db.Decimal(15, 2)
+  openedAt      DateTime      @default(now()) @map("opened_at")
+  closedAt      DateTime?     @map("closed_at")
+  status        PositionStatus
+
+  // リレーション
+  account       Account       @relation(fields: [accountId], references: [id])
+  tradeHistory  TradeHistory?
+
+  @@index([accountId, status])
+  @@map("positions")
+}
+
+enum PositionSide {
+  LONG
+  SHORT
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+}
+
+// ============================================
+// ルール管理
+// ============================================
+
+model RuleConfig {
+  id         BigInt   @id @default(autoincrement())
+  configData Json     @map("config_data")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("rule_config")
+}
+
+model RuleSnapshot {
+  id             String    @id @default(uuid()) @db.VarChar(36)
+  name           String    @db.VarChar(255)
+  description    String?   @db.Text
+  configSnapshot Json      @map("config_snapshot")
+  isActive       Boolean   @default(false) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  // リレーション
+  tradeHistory   TradeHistory[]
+  performance    RulePerformance?
+
+  @@index([createdAt])
+  @@index([isActive])
+  @@map("rule_snapshots")
+}
+
+model RulePerformance {
+  id              BigInt       @id @default(autoincrement())
+  ruleSnapshotId  String       @unique @map("rule_snapshot_id") @db.VarChar(36)
+  totalTrades     Int          @map("total_trades")
+  winningTrades   Int          @map("winning_trades")
+  losingTrades    Int          @map("losing_trades")
+  winRate         Decimal      @map("win_rate") @db.Decimal(5, 2)
+  totalPnl        Decimal      @map("total_pnl") @db.Decimal(15, 2)
+  avgProfit       Decimal      @map("avg_profit") @db.Decimal(15, 2)
+  avgLoss         Decimal      @map("avg_loss") @db.Decimal(15, 2)
+  profitFactor    Decimal      @map("profit_factor") @db.Decimal(10, 4)
+  maxDrawdown     Decimal      @map("max_drawdown") @db.Decimal(15, 2)
+  sharpeRatio     Decimal?     @map("sharpe_ratio") @db.Decimal(10, 4)
+  calculatedAt    DateTime     @default(now()) @map("calculated_at")
+
+  // リレーション
+  ruleSnapshot    RuleSnapshot @relation(fields: [ruleSnapshotId], references: [id])
+
+  @@index([winRate])
+  @@map("rule_performance")
+}
+
+model RuleViolation {
+  id             BigInt   @id @default(autoincrement())
+  accountId      String   @map("account_id") @db.VarChar(36)
+  ruleName       String   @map("rule_name") @db.VarChar(255)
+  violationReason String  @map("violation_reason") @db.Text
+  attemptedOrder Json?    @map("attempted_order")
+  context        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // リレーション
+  account        Account  @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@index([ruleName])
+  @@map("rule_violations")
+}
+
+model RuleChangeHistory {
+  id            BigInt   @id @default(autoincrement())
+  beforeConfig  Json?    @map("before_config")
+  afterConfig   Json     @map("after_config")
+  diff          Json?
+  changedAt     DateTime @default(now()) @map("changed_at")
+
+  @@index([changedAt])
+  @@map("rule_change_history")
+}
+
+// ============================================
+// 取引履歴
+// ============================================
+
+model TradeHistory {
+  id              String        @id @default(uuid()) @db.VarChar(36)
+  accountId       String        @map("account_id") @db.VarChar(36)
+  positionId      String        @unique @map("position_id") @db.VarChar(36)
+  ruleSnapshotId  String?       @map("rule_snapshot_id") @db.VarChar(36)
+  currencyPair    String        @map("currency_pair") @db.VarChar(10)
+  side            PositionSide
+  quantity        Decimal       @db.Decimal(15, 4)
+  openPrice       Decimal       @map("open_price") @db.Decimal(15, 5)
+  closePrice      Decimal       @map("close_price") @db.Decimal(15, 5)
+  realizedPnl     Decimal       @map("realized_pnl") @db.Decimal(15, 2)
+  openedAt        DateTime      @map("opened_at")
+  closedAt        DateTime      @map("closed_at")
+  durationSeconds Int?          @map("duration_seconds")
+
+  // リレーション
+  account         Account       @relation(fields: [accountId], references: [id])
+  position        Position      @relation(fields: [positionId], references: [id])
+  ruleSnapshot    RuleSnapshot? @relation(fields: [ruleSnapshotId], references: [id])
+
+  @@index([accountId, closedAt])
+  @@index([ruleSnapshotId, closedAt])
+  @@index([realizedPnl])
+  @@map("trade_history")
+}
+
+// ============================================
+// パフォーマンス追跡
+// ============================================
+
+model DailyPerformance {
+  id              BigInt   @id @default(autoincrement())
+  accountId       String   @map("account_id") @db.VarChar(36)
+  date            DateTime @db.Date
+  startingBalance Decimal  @map("starting_balance") @db.Decimal(15, 2)
+  endingBalance   Decimal  @map("ending_balance") @db.Decimal(15, 2)
+  realizedPnl     Decimal  @map("realized_pnl") @db.Decimal(15, 2)
+  unrealizedPnl   Decimal  @map("unrealized_pnl") @db.Decimal(15, 2)
+  totalTrades     Int      @map("total_trades")
+  winningTrades   Int      @map("winning_trades")
+  losingTrades    Int      @map("losing_trades")
+
+  // リレーション
+  account         Account  @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, date])
+  @@index([date])
+  @@map("daily_performance")
+}
